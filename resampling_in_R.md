@@ -225,7 +225,7 @@ data.frame(resampled1, resampled3) %>%
   theme_bw()
 ```
 
-![](resampling_in_R_files/figure-html/unnamed-chunk-7-1.png)<!-- -->
+![](unnamed-chunk-7-1.png)<!-- -->
 
 And the original data
 
@@ -238,5 +238,5 @@ data.frame(distribution1, distribution3) %>%
   theme_bw()
 ```
 
-![](resampling_in_R_files/figure-html/unnamed-chunk-8-1.png)<!-- -->
+![](unnamed-chunk-8-1.png)<!-- -->
 
