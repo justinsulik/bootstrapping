@@ -1,0 +1,660 @@
+---
+title: "Bootstrapping in R"
+author: "Justin Sulik"
+institute: 
+    - "github.com/justinsulik/bootstrapping"
+    - "justinsulik.com"
+    - "@justinsulik"
+date: ""
+output: 
+  html_document:
+    keep_md: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning=FALSE, message=FALSE, cache=TRUE)
+```
+
+
+```{r}
+library(tidyverse)
+library(boot)
+```
+
+# Bootstrapping
+
+- "To pull yourself up by your own bootstraps"
+- Sounds like it's getting something from nothing
+- But it's a robust, easy, modern, elegant approach to stats
+
+![](munchausen.jpg)
+
+# Two slogans
+
+- "Simulate and see!"
+- "Make the computer do all the work!"
+
+# Outline
+
+#### Workshop 1
+- Calculation vs simulation
+- Bootstrap resampling
+- Means and confidence intervals
+- Difference in means
+- DIY
+
+#### Workshop 2
+- Regression parameters
+- Other statistics
+- Why care about confidence intervals? "The new statistics"
+- Parametric vs. non-parametric bootstrap
+- Bootstrap vs. random permutation test
+- DIY
+
+# Today's learning objectives
+
+To understand:
+
+- the difference between simulating and calculating
+
+- how to do resampling with replacement
+
+- why bootstrapping is robust and general
+
+- how to bootstrap a confidence interval around a sample mean
+
+- how to bootstrap a CI for the difference between two means
+
+To think about:
+
+- what CIs are
+
+- why bootstrapping works
+
+# Calculation vs Simulation
+
+- Bootstrapping is one example of a broad approach to stats: resampling
+    - Others include permutation tests, Monte Carlo methods, cross-validation, jackknife...
+- These approaches involve simulating rather than calculating
+- Think of this as *statistics without formulas*
+
+- You toss a coin 30 times 
+- There are 22 heads
+- That seems higher than expected
+- How likely is it that a random coin toss results in at least 22 heads?
+
+# Calculation
+
+You need to know this formula:
+
+$\binom{N}{N_H}(\frac{1}{2})^{N_H}(\frac{1}{2})^{N_T}$
+
+N = tosses, $N_H$ = number of heads, $N_T$ = number of tails
+
+```{r}
+p <- 0
+for(i in 22:30){
+  comb <- choose(30,i)
+  p <- p + comb*0.5^i*0.5^(30-i)
+}
+round(p, 4)
+
+```
+
+# Simulating
+
+**(Not bootstrapping, yet)**
+
+Instead of knowing/remembering/looking up the formula, just simulate and see!
+
+Simulate tossing a fair dice lots of times (say, 10 000)
+
+See on how many of those simulations there were more than 22 heads
+
+```{r cache=T}
+R <- 10000
+M <- 0
+for(i in 1:R){
+    tosses = sample(0:1,30,replace=T) 
+    if(sum(tosses)>=22){
+      M <- M+1
+    }
+}
+(p <- M/R)
+```
+
+
+# Pros and Cons
+
+Calculating 
+
+- Exact
+
+- Same results every time
+
+- Burden is on your knowledge
+    
+Simulating
+
+- Inexact
+
+- Results vary
+
+- Burden is on your computer
+
+# You try it
+
+What if the question changed:
+
+- If you had two coins?
+
+- If you had dice?
+
+Easier to recall/find/derive the formula? Or update your simulation?
+
+Simulate/calculate the probability that *at least* 1 coin will show 20 heads if you have 2 coins and toss them 30 times each
+
+Simulate/calculate the probability that 2 dice will add to 5 or more
+
+
+```{r}
+M <- 0
+for(i in 1:R){
+    coin1 = sample(0:1,30,replace=T) 
+    coin2 = sample(0:1,30,replace=T)
+    if(sum(coin1)>=20 | sum(coin2)>=20){
+        M <- M+1
+    }
+}
+(p = M/R)
+
+M <- 0
+for(i in 1:R){
+    dice1 = sample(1:6,1) 
+    dice2 = sample(1:6,1) 
+    if(dice1 + dice2 >= 5){
+        M <- M+1
+    }
+}    
+(p = M/R)
+```
+
+# Are we all on board?
+
+Do you get the difference between simulating and calculating?
+
+Do you feel comfortable with this approach?
+
+Ok, let's move on to bootstrapping
+
+# What stats do we report when we do an experiment?
+
+In addition to a sample statistic (mean, proportion, r, $\beta$) we need to give some measure of accuracy (variability, uncertainty or how the data are distributed)
+
+- sd
+- se
+- CI
+
+M=23.3, 95% CI [17.2, 43.7]
+
+To do this, we can
+
+- Use formulae (calculate), or
+
+- Bootstrap (simulate)
+
+# The old-fashioned way
+
+Calculate 95% CI
+
+estimator $\pm$ (reliability coefficient)* (standard error)
+
+$\overline{x}\pm 1.96*SE$
+
+= $\overline{x}\pm 1.96*\frac{sd}{\sqrt{n}}$
+
+Do you know if that's a z- or a t-score? When to use one rather than the other?
+
+Do you know what the assumptions have to be met for this formula to hold?
+
+```{r}
+data1 <- rnorm(50,10,4)
+mean <- mean(data1)
+sd <- sd(data1)
+interval = 1.96*(sd/length(data1)^0.5)
+
+print(c(mean,mean-interval,mean+interval))
+data2 <- rnorm(20,10,4)
+mean <- mean(data2)
+sd <- sd(data2)
+interval = 2.093*(sd/length(data2)^0.5)
+print(c(mean,mean-interval,mean+interval))
+
+```
+
+# Bootstrapping
+
+Bootstrapping uses resampling **with replacement** to interrogate your data ("empirical sample")
+
+For each bootstrap sample, draw N items from your data, with replacement
+
+data = [1, 2, 3, 4, 5]
+
+sample$^*_1$ = [2, 4, 5, 1, 2]
+
+sample$^*_2$ = [4, 3, 4, 2, 5]
+
+...
+
+([see animation here](https://www.stat.auckland.ac.nz/~wild/BootAnim/movies/bootstrap1.mp4))
+
+
+Each time, just take the statistic you're interested in
+
+data = [1, 2, 3, 4, 5]          mean = 3
+
+sample$^*_1$ = [2, 4, 5, 1, 2]  mean = 2.79
+
+sample$^*_2$ = [4, 3, 4, 2, 5]  mean = 3.6
+
+...
+
+
+Repeat lots of times (e.g. 10 000)
+
+Just treat the set of bootstrap samples as informative about the distribution of the statistic you're interested in
+
+(I.e., just make inferences from the resampled data)
+
+First, let's check that it works
+
+Then, we'll discuss *why* it works
+
+```{r}
+bootSamples <- numeric(R)
+for(i in 1:R){
+  bootstrapSample <- sample(data1,length(data1),replace=TRUE)
+  bootstrapMean <- mean(bootstrapSample)
+  bootSamples[i] <- bootstrapMean
+}
+
+mean <- mean(data1)
+deltaStar <- bootSamples-mean
+lower <- mean+quantile(deltaStar, 0.025) #We'll learn to do something more sophisticated than this later!
+upper <- mean+quantile(deltaStar, 0.975)
+print(c(mean,lower,upper))
+
+bootSamples <- numeric(R)
+for(i in 1:R){
+  bootstrapSample <- sample(data2,length(data2),replace=TRUE)
+  bootstrapMean <- mean(bootstrapSample)
+  bootSamples[i] <- bootstrapMean
+}
+
+mean <- mean(data2)
+deltaStar <- bootSamples-mean
+lower <- mean+quantile(deltaStar, 0.025) #We'll learn to do something more sophisticated than this later!
+upper <- mean+quantile(deltaStar, 0.975)
+print(c(mean,lower,upper))
+```
+
+
+# Ok, it works. Why?
+
+# Practical
+
+For the formula, we treat the sample as representative
+
+So for the bootstrap we treat it as representative
+
+The sample is all we have. Let's use it!
+
+The claim is not that we're learning something new about **the population**
+
+We're learning something about **the sampling distribution**
+
+# A bit more formal
+
+empirical sample $\leftrightarrow$ population F ~ resampled data F\* $\leftrightarrow$ empirical sample
+ 
+For statistic $u$ calculated from the empirical sample, and $u^*$ from F*,
+
+IF the sample is representative of population 
+ 
+THEN the variation in $u$ is well approximated by the variation in $u^*$
+
+# A few more points
+
+Since we resample with replacement, F\* won't have same properties as the original
+
+We're **not** learning anything more about the point estimate, or about the population. 
+
+We're learning more about the **distribution** of the statistic
+
+We used percentiles to derive confidence intervals directly from F\* above. We'll learn fancier ways to derive CIs next week. 
+
+# You try it
+
+Generate some random normal samples OR find some of your own data
+
+Use the formula and bootstrapping to see how closely CIs for the means
+
+If they're different, why do you think that is?
+
+Convince yourself it works before we look in more detail at the logic behind the bootstrap
+
+
+# Let's check the bigger picture
+
+#### Tricky to get your head around it? Best thing to do is simulate some more!
+
+Assume a large population F (say 5 million people)
+
+An experimenter might just take one sample from F (time! money!)
+
+Let's take a bunch of samples from F (like several experimenters replicating an experiment)
+
+See what we're learning about: point estimates (No!) vs confidence (Yes!)
+
+```{r}
+population <- rnorm(5000000,0,2)
+
+population %>% density %>% plot
+```
+
+Imagine 4 independent experimenters sampled from the same population.
+
+```{r}
+sample1 <- sample(population,100, replace=T)
+sample2 <- sample(population,100, replace=T)
+sample3 <- sample(population,100, replace=T)
+sample4 <- sample(population,100, replace=T)
+
+df <- data.frame(sample1=sample1, sample2=sample2, sample3=sample3, sample4=sample4)
+
+df %>% 
+  gather(sample,value,sample1:sample4) %>% 
+  ggplot(aes(x=value,color=sample)) + 
+   geom_density() + 
+   theme_bw()
+
+# Bootstrap each experimenter's data/empirical sample
+
+bootDf <- replicate(10000, sapply(df, function(x) 
+ mean(sample(x, replace = TRUE)))) %>% 
+  t %>%
+  data.frame
+
+bootDf %>% gather(sample,value,sample1:sample4) %>%
+  ggplot(aes(x=value,color=sample)) + 
+  geom_density() + 
+  theme_bw()
+
+# Compare empirical means with bootstrapped means
+
+colMeans(df)
+colMeans(bootDf)
+```
+
+The same! We're not learning anything about the point estimates or the population mean!
+
+Let's look at CIs
+
+```{r}
+bootDf %>% 
+  gather(sample,value,sample1:sample4) %>%
+  group_by(sample) %>%
+  summarise(lower=quantile(value, 0.025),
+            upper=quantile(value,0.975)) 
+```
+
+So the bootstrapped CIs *usually* contain the population mean (i.e. 0)
+
+Let's quantify *usually*
+
+```{r}
+# Return True if population mean (i.e. 0) is in the bootstrapped CI
+bootDf %>% 
+  gather(sample,value,sample1:sample4) %>%
+  group_by(sample) %>%
+  summarise(lower=quantile(value, 0.025),
+            upper=quantile(value,0.975)) %>%
+  mutate(containsMean = ifelse(0>lower&0<upper, TRUE, FALSE))
+```
+
+What if we had 100 samples from the population, instead of 4?
+
+```{r}
+df <- data.frame(matrix(nrow=100,ncol=100))
+for(i in 1:100){
+  df[,i] <- sample(population,100,replace=T)
+}
+
+bootDf <- replicate(10000, sapply(df, function(x) 
+ mean(sample(x, replace = TRUE)))) %>% 
+  t %>%
+  data.frame
+
+bootDf %>% 
+  gather(sample,value) %>%
+  group_by(sample) %>%
+  summarise(lower=quantile(value, 0.025),
+            upper=quantile(value,0.975)) %>%
+  mutate(containsMean = ifelse(0>lower&0<upper, 1, 0)) %>% 
+  select(containsMean) %>% 
+  sum
+```
+
+# What have we learned by getting bootstrapped CIs?
+
+We don't have access to the whole population (too big/expensive/time consuming)
+
+We have an empirical sample
+
+If we've done our job right, and sampled randomly, this should be representative of the population
+
+We can get a point estimate from the empirical sample
+
+This won't be the same as the population mean, but we hope it's not far off
+
+We can't hope to find out the true population mean
+
+What we want is a confidence interval for our sample (empirical) mean
+
+IF we had the time/money/wherewithal to do multiple experiments, repeatedly sampling from the population
+
+**THEN 95% of the time the population mean would fall within our bootstrap CIs**
+
+# Are we all on board?
+
+What is a CI?
+
+What kind of resampling is involved in bootstrapping? Why?
+
+Does the bootstrap tell us anything about:
+
+- the true mean (or other statistic)
+
+- the sample mean (or other statistic)
+
+- the proportion of our data that lies within the CI?
+
+Ok, so bootstrapping works 
+
+Why bother using it, instead of the traditional formulae?
+
+# Reasons to use a bootstrap
+
+*Reason 1*
+
+- The formulae usually make assumptions (normality, unbounded, ...)
+
+- Sometimes your data doesn't fit the assumptions
+
+- Bootstrapping works regardless
+
+*Reason 2*
+
+- Sometimes you don't know the formula
+
+- Or the formula is complicated
+
+- Or the formula doesn't exist
+
+- Bootstrapping works regardless
+
+# Reason 1 - Not meeting assumptions
+
+$\overline{x}\pm 1.96*\frac{sd}{\sqrt{n}}$
+
+What if your data is not normal, or is limited to a certain range?
+
+E.g. proportion correct out of N trials
+
+- binomial, not normal
+
+- bounded between 0 and 1
+
+E.g. count data (number of blinks per minute)
+
+- Poisson, not normal
+
+- Non-negative count
+
+E.g. reaction time data 
+
+- Various ways to model
+
+- Positive continuous
+
+
+What if you're not **sure** your data is normal?
+
+We'll get into different distributions next week
+
+# Reason 2 - Formulae
+
+What if you need to get CIs for things other than means?
+
+What if the formula is very complicated (and people argue about it)?
+
+- see [here](https://stats.stackexchange.com/questions/122001/confidence-intervals-for-median) for medians
+
+What if there is no formula?
+
+- $r$, $r^2$
+
+Bootstrapping works regardless!
+
+```{r}
+data = rbeta(20,1,9) 
+
+data %>% 
+  data.frame(x=.) %>%
+  ggplot(aes(x=x)) +
+  geom_histogram(binwidth=0.05, alpha=0.4) + 
+  geom_density(binwidth=0.05) + 
+  theme_bw()
+
+bootSamples <- numeric(R)
+for(i in 1:R){
+  bootstrapSample <- sample(data,length(data),replace=TRUE)
+  bootstrapMean <- mean(bootstrapSample)
+  bootSamples[i] <- bootstrapMean
+}
+
+deltaStar <- bootSamples-mean(data)
+
+(intervals <- quantile(deltaStar,c(0.025,0.975)))
+print(c(mean(data),intervals+mean(data)))
+
+```
+
+Notice that the CI is not symmetric about the mean
+
+That's because bootstrapping tells us about the data distribution
+
+Whereas the formula uses $\pm$
+
+# Last bit: difference in means
+
+Case 1:
+Two samples drawn from the same distribution
+
+Case 2:
+Two samples drawn from different distributions
+
+Can we use the bootstrap to contrast these cases?
+
+```{r}
+group1 <- rnorm(35,6,3)
+group2 <- rnorm(40,6,3) #Doesn't have to be same size!
+group3 <- rnorm(30,9,3) #Doesn't have to be same size!
+
+compareMeans <- function(groupA,groupB){
+  groupAstar <- sample(groupA,length(groupA),replace=T)
+  groupBstar <- sample(groupB,length(groupB),replace=T)
+  diff <- mean(groupAstar)-mean(groupBstar)
+  return(diff)
+}
+
+#compare group1,group2 (same distribution)
+diff1_2 <- mean(group1)-mean(group2)
+
+bootSamples <- numeric(R)
+for(i in 1:R){
+  diff <- compareMeans(group1,group2)
+  bootSamples[i] <- diff
+}
+deltaStar <- bootSamples-diff1_2
+intervals <- quantile(deltaStar,c(0.025,0.975))
+(diff1_2+intervals)
+
+#compare group1,group3 (different distribution)
+diff1_3 <- mean(group1)-mean(group3)
+
+bootSamples <- numeric(R)
+for(i in 1:R){
+  diff <- compareMeans(group1,group3)
+  bootSamples[i] <- diff
+}
+deltaStar <- bootSamples-diff1_3
+intervals <- quantile(deltaStar,c(0.025,0.975))
+(diff1_3+intervals)
+```
+
+# Final Task
+
+You try it!
+
+Either simulate some date, or use some of your own
+
+Go for between-subjects data 
+
+Try plot the distributions
+
+Calculate CIs for the difference in means
+
+# Conclusions
+
+The bootstrap is **robust**
+- Why?
+
+The bootstrap is **general**
+- Why?
+
+The bootstrap is **simple**
+- Why?
+
+The bootstrap is **modern**
+- Why?
+
+# Next week
+
+- Using the `boot` package to handle all the resampling and confidence intervals for us
+- Regression parameters
+- Other statistics
+- Why care about confidence intervals? "The new statistics"
+- Parametric vs. non-parametric bootstrap
+- Bootstrap vs. random permutation test
+- DIY
